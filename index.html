@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#111827">
+<title>GPS Live Tracker Pro</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;font-family:Arial,sans-serif;background:#f3f4f6;color:#17202a}
+body{display:flex;flex-direction:column}header{background:#111827;color:#fff;padding:11px 14px;text-align:center}
+h1{font-size:19px;margin:0}.sub{font-size:11px;color:#cbd5e1;margin-top:3px}
+#map{flex:1;min-height:48vh}.panel{background:#fff;padding:10px;box-shadow:0 -3px 15px #0002;z-index:1000}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px}.stat{background:#f1f5f9;border-radius:9px;text-align:center;padding:7px 3px}
+.stat b{display:block;font-size:15px}.stat span{font-size:9px;color:#64748b}.buttons{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+button{border:0;border-radius:9px;padding:11px 4px;font-weight:bold;font-size:12px;background:#e5e7eb;color:#111827}
+.primary{background:#16a34a!important;color:#fff}.danger{background:#dc2626!important;color:#fff}.blue{background:#2563eb!important;color:#fff}.orange{background:#ea580c!important;color:#fff}
+button:disabled{opacity:.45}#status{text-align:center;font-size:11px;color:#475569;padding:7px 2px 2px}
+.modal{display:none;position:fixed;inset:0;background:#0008;z-index:4000;align-items:center;justify-content:center;padding:20px}
+.card{background:#fff;border-radius:16px;padding:20px;width:min(390px,100%);box-shadow:0 12px 40px #0005;text-align:center}
+.card h2{margin:0 0 8px;font-size:21px}.card p{font-size:13px;line-height:1.5;color:#475569}
+.gpsIcon{font-size:50px;margin:5px}.ok{color:#16a34a;font-weight:bold}.warn{color:#dc2626;font-weight:bold}
+input,select{width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:9px;margin-bottom:10px;font-size:15px}.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#canvas{display:none}.legend{font-size:10px;color:#64748b;margin-top:5px;text-align:center}
+.zone-help{display:none;background:#fff7ed;color:#9a3412;border-radius:8px;padding:7px;margin-top:6px;font-size:11px;text-align:center}
+@media(min-width:800px){#map{min-height:55vh}.panel{max-width:900px;width:100%;margin:auto}.buttons{grid-template-columns:repeat(6,1fr)}}
+</style>
+</head>
+<body>
+
+<header><h1>📡 GPS LIVE TRACKER PRO</h1><div class="sub">Recorrido en vivo + puntos + GPS del teléfono</div></header>
+<div id="map"></div>
+
+<section class="panel">
+<div class="stats">
+<div class="stat"><b id="distance">0.00</b><span>KM</span></div>
+<div class="stat"><b id="time">00:00:00</b><span>TIEMPO</span></div>
+<div class="stat"><b id="points">0</b><span>GPS</span></div>
+<div class="stat"><b id="markers">0</b><span>MARCADORES</span></div>
+</div>
+<div class="buttons">
+<button id="start" class="primary">▶ INICIAR</button>
+<button id="pause">⏸ PAUSAR</button>
+<button id="finish" class="danger">⏹ FINALIZAR</button>
+<button id="mark" class="orange">📍 MARCAR</button>
+<button id="follow" class="blue">🎯 SEGUIR GPS</button>
+<button id="clear">🗑 NUEVO</button>
+</div>
+<div class="buttons" style="margin-top:6px">
+<button id="png">🖼️ PNG</button><button id="jpg">🖼️ JPG</button>
+<button id="exportData" class="blue">⬇️ DESCARGAR DATOS</button>
+<button id="importData">⬆️ CARGAR RECORRIDOS</button>
+<button id="zone" class="orange">🖌️ PINTAR ZONA</button>
+</div>
+<div class="buttons" style="margin-top:6px">
+<button id="exportExcel" class="primary">📊 EXPORTAR EXCEL</button>
+<button id="resetAll" class="danger">🔄 REINICIAR TODO</button>
+</div>
+<input id="fileInput" type="file" accept=".json,application/json" style="display:none">
+<div id="status">Solicita permiso de ubicación para comenzar.</div>
+<div id="zoneHelp" class="zone-help">🖌️ Pintando zona: toca varios puntos del mapa y luego pulsa nuevamente “PINTAR ZONA” para cerrar.</div>
+<div class="legend">El GPS requiere permiso del navegador y una conexión HTTPS para funcionar en la mayoría de teléfonos.</div>
+</section>
+
+<!-- Solicitud de permiso -->
+<div id="permissionModal" class="modal" style="display:flex">
+<div class="card">
+<div class="gpsIcon">📍</div>
+<h2>Permiso de ubicación</h2>
+<p>Esta aplicación necesita acceder a la <b>ubicación de tu dispositivo</b> para mostrar tu posición y dibujar el recorrido en vivo.</p>
+<p>Al continuar, el navegador mostrará su propia ventana de permiso. Debes elegir <b>Permitir</b>.</p>
+<button id="requestLocation" class="primary" style="width:100%;margin-top:8px">📡 PERMITIR ACCESO AL GPS</button>
+<p id="permissionStatus" style="font-size:11px;margin-bottom:0"></p>
+</div>
+</div>
+
+<!-- Marcador -->
+<div id="markerModal" class="modal">
+<div class="card"><h2>📍 Nuevo punto</h2>
+<input id="pointName" placeholder="Nombre del punto">
+<select id="pointType">
+<option>📍 Punto</option><option>👤 Cliente</option><option>🏁 Parada</option>
+<option>⚠️ Incidencia</option><option>⭐ Importante</option>
+</select>
+<div class="row"><button id="cancel">CANCELAR</button><button id="savePoint" class="blue">GUARDAR</button></div>
+</div></div>
+<canvas id="canvas"></canvas>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+const map=L.map('map').setView([-0.18065,-78.46784],13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+
+let route=[],markers=[],watchId=null,currentMarker=null,startMarker=null,endMarker=null;
+let line=L.polyline([],{color:'#2563eb',weight:5}).addTo(map);
+let totalDistance=0,running=false,paused=false,follow=true,startTime=null,pausedSeconds=0,timer=null,lastPosition=null;
+let savedRoutes=[],zones=[],drawingZone=false,currentZone=[];
+
+const $=id=>document.getElementById(id);
+function status(t){$('status').textContent=t}
+function distance(a,b){
+const R=6371000,p1=a.lat*Math.PI/180,p2=b.lat*Math.PI/180,dp=(b.lat-a.lat)*Math.PI/180,dl=(b.lng-a.lng)*Math.PI/180;
+const x=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return 2*R*Math.asin(Math.sqrt(x));
+}
+function timeText(s){s=Math.floor(Math.max(0,s));return String(Math.floor(s/3600)).padStart(2,'0')+':'+String(Math.floor(s%3600/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
+function elapsed(){return startTime?Math.floor((Date.now()-startTime)/1000)+pausedSeconds:pausedSeconds}
+function stats(){$('distance').textContent=(totalDistance/1000).toFixed(2);$('points').textContent=route.length;$('markers').textContent=markers.length;$('time').textContent=timeText(elapsed())}
+function saveLocal(){
+  try{localStorage.setItem('gpsTrackerData',JSON.stringify({route,markers,totalDistance,savedRoutes,zones}));}catch(e){}
+}
+function loadLocal(){
+  try{
+    const d=JSON.parse(localStorage.getItem('gpsTrackerData')||'null');
+    if(!d)return;
+    if(Array.isArray(d.route))route=d.route;
+    if(Array.isArray(d.markers))markers=d.markers;
+    if(Number.isFinite(d.totalDistance))totalDistance=d.totalDistance;
+    if(Array.isArray(d.savedRoutes))d.savedRoutes.forEach(renderImportedRoute);
+    if(Array.isArray(d.zones))d.zones.forEach(z=>{
+      if(Array.isArray(z.points)&&z.points.length>=3){
+        L.polygon(z.points.map(p=>[p.lat,p.lng]),{color:z.color||'#ea580c',fillColor:z.fillColor||'#fb923c',fillOpacity:.25,weight:3}).addTo(map);
+        zones.push(z);
+      }
+    });
+    if(route.length){line.setLatLngs(route.map(p=>[p.lat,p.lng]));}
+    stats();
+  }catch(e){}
+}
+
+
+function renderImportedRoute(item){
+  if(!item || !Array.isArray(item.route) || item.route.length<2)return;
+  const pts=item.route.filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lng));
+  if(pts.length<2)return;
+  const color=item.color||'#7c3aed';
+  const importedLine=L.polyline(pts.map(p=>[p.lat,p.lng]),{color,weight:5,dashArray:'10 7'}).addTo(map);
+  importedLine.bindPopup(`<b>Recorrido: ${item.name||'Importado'}</b><br>Puntos: ${pts.length}`);
+  if(item.markers?.length){
+    item.markers.forEach(p=>{
+      if(Number.isFinite(p.lat)&&Number.isFinite(p.lng)){
+        L.marker([p.lat,p.lng]).addTo(map).bindPopup(`<b>${p.type||'📍 Punto'} ${p.name||''}</b>`);
+      }
+    });
+  }
+  savedRoutes.push({name:item.name||`Recorrido ${savedRoutes.length+1}`,route:pts,markers:item.markers||[]});
+}
+
+function exportData(){
+  const data={
+    app:'GPS Live Tracker Pro',
+    version:2,
+    exportedAt:new Date().toISOString(),
+    activeRoute:route,
+    activeMarkers:markers,
+    activeDistance:totalDistance,
+    routes:savedRoutes,
+    zones:zones
+  };
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`gps-recorridos-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  status('⬇️ Datos, recorridos, marcadores y zonas descargados.');
+}
+
+function importData(file){
+  const reader=new FileReader();
+  reader.onload=()=>{
+    try{
+      const data=JSON.parse(reader.result);
+      let count=0;
+      if(Array.isArray(data.routes)){
+        data.routes.forEach(r=>{renderImportedRoute(r);count++;});
+      }
+      if(Array.isArray(data.activeRoute)&&data.activeRoute.length>=2){
+        renderImportedRoute({name:'Recorrido principal importado',route:data.activeRoute,markers:data.activeMarkers||[]});
+        count++;
+      }
+      if(Array.isArray(data.zones)){
+        data.zones.forEach(z=>{
+          if(Array.isArray(z.points)&&z.points.length>=3){
+            const poly=L.polygon(z.points.map(p=>[p.lat,p.lng]),{
+              color:z.color||'#ea580c',fillColor:z.fillColor||'#fb923c',fillOpacity:.25,weight:3
+            }).addTo(map);
+            zones.push({points:z.points,color:z.color||'#ea580c',fillColor:z.fillColor||'#fb923c'});
+          }
+        });
+      }
+      if(count){
+        const bounds=[];
+        savedRoutes.forEach(r=>r.route.forEach(p=>bounds.push([p.lat,p.lng])));
+        if(bounds.length)map.fitBounds(bounds,{padding:[20,20]});
+      }
+      status(`⬆️ Archivo cargado: ${count} recorrido(s) y ${data.zones?.length||0} zona(s).`);
+    }catch(e){status('❌ El archivo no es un JSON de recorridos válido.');}
+  };
+  reader.readAsText(file);
+}
+
+function toggleZoneDrawing(){
+  if(drawingZone){
+    drawingZone=false;
+    $('zoneHelp').style.display='none';
+    if(currentZone.length>=3){
+      const poly=L.polygon(currentZone.map(p=>[p.lat,p.lng]),{
+        color:'#ea580c',fillColor:'#fb923c',fillOpacity:.25,weight:3
+      }).addTo(map).bindPopup(`🖌️ Zona ${zones.length+1}`);
+      zones.push({points:currentZone.map(p=>({lat:p.lat,lng:p.lng})),color:'#ea580c',fillColor:'#fb923c'});
+      status(`🖌️ Zona guardada (${currentZone.length} puntos).`);
+    }else{
+      status('Zona cancelada: necesitas al menos 3 puntos.');
+    }
+    currentZone=[];
+    $('zone').textContent='🖌️ PINTAR ZONA';
+    return;
+  }
+  drawingZone=true;
+  currentZone=[];
+  $('zoneHelp').style.display='block';
+  $('zone').textContent='✅ CERRAR ZONA';
+  status('🖌️ Modo pintura activo: toca el mapa para agregar puntos.');
+}
+
+map.on('click',e=>{
+  if(!drawingZone)return;
+  currentZone.push({lat:e.latlng.lat,lng:e.latlng.lng});
+  L.circleMarker(e.latlng,{radius:5}).addTo(map);
+});
+
+$('exportData').onclick=exportData;
+$('importData').onclick=()=>$('fileInput').click();
+$('fileInput').addEventListener('change',e=>{
+  if(e.target.files[0]) importData(e.target.files[0]);
+  e.target.value='';
+});
+$('zone').onclick=toggleZoneDrawing;
+
+function requestGPSPermission(){
+if(!navigator.geolocation){
+$('permissionStatus').innerHTML='<span class="warn">Este navegador no admite geolocalización.</span>';return;
+}
+$('permissionStatus').textContent='Solicitando permiso al navegador...';
+navigator.geolocation.getCurrentPosition(pos=>{
+$('permissionModal').style.display='none';
+const p={lat:pos.coords.latitude,lng:pos.coords.longitude,accuracy:pos.coords.accuracy};
+map.setView([p.lat,p.lng],17);
+if(currentMarker)map.removeLayer(currentMarker);
+currentMarker=L.circleMarker([p.lat,p.lng],{radius:9,weight:3}).addTo(map).bindPopup('📡 Tu ubicación');
+lastPosition=p;
+status(`Ubicación autorizada · precisión ±${Math.round(p.accuracy)} m`);
+},err=>{
+let msg=err.code===1?'Permiso denegado. Ve a los permisos del navegador y habilita Ubicación.':err.code===2?'No se pudo obtener la ubicación.':'Tiempo de espera agotado.';
+$('permissionStatus').innerHTML='<span class="warn">'+msg+'</span>';
+status(msg);
+},{enableHighAccuracy:true,maximumAge:0,timeout:15000});
+}
+$('requestLocation').onclick=requestGPSPermission;
+
+function onGPS(pos){
+const p={lat:pos.coords.latitude,lng:pos.coords.longitude,accuracy:pos.coords.accuracy||0,speed:pos.coords.speed||0,time:new Date()};
+if(lastPosition){
+const d=distance(lastPosition,p);
+if(d<=300){totalDistance+=d;route.push(p);line.addLatLng([p.lat,p.lng])}
+}else{route.push(p);line.addLatLng([p.lat,p.lng])}
+lastPosition=p;
+if(!currentMarker)currentMarker=L.circleMarker([p.lat,p.lng],{radius:9,weight:3}).addTo(map);
+else currentMarker.setLatLng([p.lat,p.lng]);
+if(!startMarker){startMarker=L.marker([p.lat,p.lng]).addTo(map).bindPopup('🟢 INICIO').openPopup()}
+if(follow)map.setView([p.lat,p.lng],17);
+stats();saveLocal();status(`📡 GPS EN VIVO · precisión ±${Math.round(p.accuracy)} m`);
+}
+function onError(e){status(e.code===1?'Permiso GPS denegado. Actívalo en los permisos del navegador.':e.code===2?'No se pudo obtener el GPS.':'Tiempo de espera del GPS agotado.')}
+function startWatch(){watchId=navigator.geolocation.watchPosition(onGPS,onError,{enableHighAccuracy:true,maximumAge:1000,timeout:15000})}
+
+$('start').onclick=()=>{
+if(!navigator.geolocation){status('Tu navegador no soporta GPS.');return}
+if(running&&paused){paused=false;startTime=Date.now();startWatch();timer=setInterval(stats,1000);status('Recorrido reanudado.');return}
+if(running)return;
+if(!lastPosition){requestGPSPermission();return}
+route=[];totalDistance=0;line.setLatLngs([]);saveLocal();
+if(startMarker){map.removeLayer(startMarker);startMarker=null} if(endMarker){map.removeLayer(endMarker);endMarker=null}
+running=true;paused=false;pausedSeconds=0;startTime=Date.now();startWatch();timer=setInterval(stats,1000);
+status('Recorrido iniciado · GPS en vivo');
+};
+$('pause').onclick=()=>{
+if(!running||paused)return;pausedSeconds=elapsed();startTime=null;paused=true;
+clearInterval(timer);timer=null;if(watchId!==null)navigator.geolocation.clearWatch(watchId);watchId=null;status('⏸ Recorrido pausado.');
+};
+$('finish').onclick=()=>{
+if(!running)return;if(watchId!==null)navigator.geolocation.clearWatch(watchId);watchId=null;clearInterval(timer);timer=null;running=false;paused=false;
+if(lastPosition)endMarker=L.marker([lastPosition.lat,lastPosition.lng]).addTo(map).bindPopup('🔴 FIN').openPopup();
+stats();saveLocal();status(`⏹ Recorrido finalizado · ${route.length} puntos GPS.`);
+};
+$('follow').onclick=()=>{follow=!follow;$('follow').textContent=follow?'🎯 SEGUIR GPS':'🔓 GPS LIBRE';if(follow&&currentMarker)map.setView(currentMarker.getLatLng(),17)}
+$('mark').onclick=()=>{
+if(!lastPosition){status('Primero autoriza el GPS y obtén una ubicación.');return}
+$('pointName').value='';$('markerModal').style.display='flex';$('pointName').focus();
+};
+$('cancel').onclick=()=>$('markerModal').style.display='none';
+$('savePoint').onclick=()=>{
+const name=$('pointName').value.trim()||'Punto '+(markers.length+1),type=$('pointType').value;
+const p={lat:lastPosition.lat,lng:lastPosition.lng,name,type,time:new Date()};markers.push(p);saveLocal();
+L.marker([p.lat,p.lng]).addTo(map).bindPopup(`<b>${type} ${name}</b><br>Lat: ${p.lat.toFixed(6)}<br>Lng: ${p.lng.toFixed(6)}<br>${p.time.toLocaleTimeString()}`).openPopup();
+$('markerModal').style.display='none';stats();status(`📍 Marcador guardado: ${name}`);
+};
+$('clear').onclick=()=>{
+if(!confirm('¿Borrar el recorrido y comenzar de nuevo?'))return;
+if(watchId!==null)navigator.geolocation.clearWatch(watchId);clearInterval(timer);
+watchId=null;timer=null;route=[];markers=[];totalDistance=0;running=false;paused=false;startTime=null;pausedSeconds=0;
+line.setLatLngs([]);[startMarker,endMarker].forEach(x=>{if(x)map.removeLayer(x)});startMarker=endMarker=null;
+stats();status('Nuevo recorrido listo. Los recorridos importados y zonas se conservan.');if(lastPosition)map.setView([lastPosition.lat,lastPosition.lng],17);
+};
+
+// Reinicia TODA la app: recorrido activo, marcadores, zonas, recorridos importados y localStorage.
+function resetAll(){
+  if(!confirm('⚠️ Esto borrará TODO: recorrido actual, marcadores, zonas y recorridos importados. ¿Continuar?'))return;
+  if(watchId!==null)navigator.geolocation.clearWatch(watchId);
+  clearInterval(timer);watchId=null;timer=null;
+  route=[];markers=[];zones=[];savedRoutes=[];
+  totalDistance=0;running=false;paused=false;startTime=null;pausedSeconds=0;lastPosition=null;
+  drawingZone=false;currentZone=[];$('zoneHelp').style.display='none';$('zone').textContent='🖌️ PINTAR ZONA';
+  line.setLatLngs([]);
+  map.eachLayer(l=>{ if(l!==line && !(l instanceof L.TileLayer)) map.removeLayer(l); });
+  currentMarker=startMarker=endMarker=null;
+  try{localStorage.removeItem('gpsTrackerData');}catch(e){}
+  stats();
+  status('🔄 Aplicación reiniciada por completo. Solicita permiso de ubicación para comenzar.');
+  $('permissionModal').style.display='flex';
+  $('permissionStatus').textContent='';
+}
+$('resetAll').onclick=resetAll;
+
+// Exporta toda la información (recorrido, marcadores, zonas, recorridos guardados) a un Excel tipo dashboard.
+function exportExcel(){
+  if(!route.length && !markers.length && !zones.length && !savedRoutes.length){
+    status('No hay datos para exportar todavía.');return;
+  }
+  const wb=XLSX.utils.book_new();
+
+  // Hoja 1: Dashboard / Resumen
+  const resumen=[
+    ['📡 GPS LIVE TRACKER PRO — DASHBOARD DEL RECORRIDO'],
+    [],
+    ['Fecha de exportación', new Date().toLocaleString()],
+    ['Distancia total (km)', +(totalDistance/1000).toFixed(3)],
+    ['Tiempo transcurrido', timeText(elapsed())],
+    ['Puntos GPS registrados', route.length],
+    ['Marcadores guardados', markers.length],
+    ['Zonas pintadas', zones.length],
+    ['Recorridos importados', savedRoutes.length],
+    ['Estado del recorrido', running?(paused?'Pausado':'En curso'):'Detenido'],
+    [],
+    ['Inicio', route[0]? `${route[0].lat.toFixed(6)}, ${route[0].lng.toFixed(6)}` : '—'],
+    ['Fin / última posición', route.length? `${route[route.length-1].lat.toFixed(6)}, ${route[route.length-1].lng.toFixed(6)}` : '—'],
+  ];
+  const wsResumen=XLSX.utils.aoa_to_sheet(resumen);
+  wsResumen['!cols']=[{wch:26},{wch:34}];
+  wsResumen['!merges']=[{s:{r:0,c:0},e:{r:0,c:1}}];
+  XLSX.utils.book_append_sheet(wb,wsResumen,'Dashboard');
+
+  // Hoja 2: Recorrido GPS (puntos crudos)
+  const rutaRows=[['#','Latitud','Longitud','Precisión (m)','Velocidad (m/s)','Hora']];
+  route.forEach((p,i)=>rutaRows.push([i+1,p.lat,p.lng,p.accuracy??'',p.speed??'',p.time?new Date(p.time).toLocaleString():'']));
+  const wsRuta=XLSX.utils.aoa_to_sheet(rutaRows);
+  wsRuta['!cols']=[{wch:5},{wch:14},{wch:14},{wch:14},{wch:16},{wch:22}];
+  XLSX.utils.book_append_sheet(wb,wsRuta,'Recorrido GPS');
+
+  // Hoja 3: Marcadores
+  const marcRows=[['#','Nombre','Tipo','Latitud','Longitud','Hora']];
+  markers.forEach((p,i)=>marcRows.push([i+1,p.name||'',p.type||'',p.lat,p.lng,p.time?new Date(p.time).toLocaleString():'']));
+  const wsMarc=XLSX.utils.aoa_to_sheet(marcRows);
+  wsMarc['!cols']=[{wch:5},{wch:20},{wch:16},{wch:14},{wch:14},{wch:22}];
+  XLSX.utils.book_append_sheet(wb,wsMarc,'Marcadores');
+
+  // Hoja 4: Zonas pintadas
+  const zonaRows=[['Zona #','Punto #','Latitud','Longitud']];
+  zones.forEach((z,zi)=>(z.points||[]).forEach((p,pi)=>zonaRows.push([zi+1,pi+1,p.lat,p.lng])));
+  const wsZonas=XLSX.utils.aoa_to_sheet(zonaRows);
+  wsZonas['!cols']=[{wch:8},{wch:8},{wch:14},{wch:14}];
+  XLSX.utils.book_append_sheet(wb,wsZonas,'Zonas');
+
+  // Hoja 5: Recorridos importados/guardados (resumen + puntos)
+  const savedSummary=[['#','Nombre','Puntos GPS','Marcadores']];
+  savedRoutes.forEach((r,i)=>savedSummary.push([i+1,r.name||`Recorrido ${i+1}`,r.route?.length||0,r.markers?.length||0]));
+  const wsSaved=XLSX.utils.aoa_to_sheet(savedSummary);
+  wsSaved['!cols']=[{wch:5},{wch:26},{wch:14},{wch:14}];
+  XLSX.utils.book_append_sheet(wb,wsSaved,'Recorridos guardados');
+
+  XLSX.writeFile(wb,`gps-dashboard-${new Date().toISOString().slice(0,10)}.xlsx`);
+  status('📊 Excel del dashboard exportado correctamente.');
+}
+$('exportExcel').onclick=exportExcel;
+
+// Exporta un mapa visual del recorrido, incluyendo puntos y métricas.
+function exportImage(ext){
+if(route.length<2){status('Necesitas al menos 2 puntos GPS para exportar.');return}
+const c=$('canvas'),W=1500,H=900,ctx=c.getContext('2d');c.width=W;c.height=H;
+ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);ctx.fillStyle='#111827';ctx.fillRect(0,0,W,100);
+ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.fillText('📡 RECORRIDO GPS EN VIVO',45,58);
+const box={x:50,y:130,w:1400,h:670};ctx.fillStyle='#eef2f7';ctx.fillRect(box.x,box.y,box.w,box.h);
+ctx.strokeStyle='#d5dde7';ctx.lineWidth=1;for(let x=box.x;x<=box.x+box.w;x+=70){ctx.beginPath();ctx.moveTo(x,box.y);ctx.lineTo(x,box.y+box.h);ctx.stroke()}for(let y=box.y;y<=box.y+box.h;y+=70){ctx.beginPath();ctx.moveTo(box.x,y);ctx.lineTo(box.x+box.w,y);ctx.stroke()}
+const all=route.concat(markers),minLat=Math.min(...all.map(p=>p.lat)),maxLat=Math.max(...all.map(p=>p.lat)),minLng=Math.min(...all.map(p=>p.lng)),maxLng=Math.max(...all.map(p=>p.lng));
+const lr=Math.max(maxLat-minLat,.0001),gr=Math.max(maxLng-minLng,.0001),scale=Math.min(box.w/gr,box.h/lr)*.88,ox=box.x+(box.w-gr*scale)/2,oy=box.y+(box.h-lr*scale)/2;
+const xy=p=>[ox+(p.lng-minLng)*scale,oy+(maxLat-p.lat)*scale];
+ctx.beginPath();route.forEach((p,i)=>{const [x,y]=xy(p);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.strokeStyle='#2563eb';ctx.lineWidth=9;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke();
+function dot(p,c,label){const [x,y]=xy(p);ctx.fillStyle=c;ctx.beginPath();ctx.arc(x,y,13,0,Math.PI*2);ctx.fill();ctx.fillStyle='#111827';ctx.font='bold 18px Arial';ctx.fillText(label,x+18,y-10)}
+dot(route[0],'#16a34a','INICIO');dot(route[route.length-1],'#dc2626','FIN');markers.forEach(p=>dot(p,'#ea580c',`${p.type} ${p.name}`));
+ctx.fillStyle='#111827';ctx.font='bold 21px Arial';ctx.fillText(`Distancia: ${(totalDistance/1000).toFixed(2)} km`,55,850);ctx.fillText(`Tiempo: ${timeText(elapsed())}`,390,850);ctx.fillText(`GPS: ${route.length}`,700,850);ctx.fillText(`Marcadores: ${markers.length}`,900,850);
+const mime=ext==='jpg'?'image/jpeg':'image/png',a=document.createElement('a');a.download=`recorrido-gps-${new Date().toISOString().slice(0,10)}.${ext}`;a.href=c.toDataURL(mime,.92);a.click();status(`Imagen ${ext.toUpperCase()} generada.`);
+}
+$('png').onclick=()=>exportImage('png');$('jpg').onclick=()=>exportImage('jpg');loadLocal();stats();
+</script>
+</body>
+</html>
